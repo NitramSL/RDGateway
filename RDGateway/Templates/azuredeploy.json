@@ -1,0 +1,252 @@
+﻿{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "rdgatewayFQDN": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rdgatewayAdminUserName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rdgatewayAdminPassword": {
+      "type": "securestring"
+    },
+      "_artifactsLocation": {
+          "type": "string",
+          "metadata": {
+              "description": "Auto-generated container in staging storage account to receive post-build staging folder upload"
+          }
+      },
+      "_artifactsLocationSasToken": {
+          "type": "securestring",
+          "metadata": {
+              "description": "Auto-generated token to access _artifactsLocation"
+          }
+      }
+  },
+  "variables": {
+    "rdgatewayName": "[split(parameters('rdgatewayFQDN'),'.')[0]]",
+    "saRDGatewayType": "Standard_LRS",
+    "rdgatewayWindowsOSVersion": "2012-R2-Datacenter",
+    "rdgatewayImagePublisher": "MicrosoftWindowsServer",
+    "rdgatewayImageOffer": "WindowsServer",
+    "rdgatewayOSDiskName": "[concat(variables('rdgatewayName'),'-vhd-os')]",
+    "rdgatewayVmSize": "Standard_A1",
+    "saRDGatewayName": "[concat('sa',variables('rdgatewayName'))]",
+    "rdgatewayNicName": "[concat(variables('rdgatewayName'),'-nic')]",
+    "vn-rdgatewayPrefix": "10.0.0.0/16",
+    "vn-rdgatewaySubnet1Name": "Subnet-Infra",
+    "vn-rdgatewaySubnet1Prefix": "10.0.0.0/24",
+    "vn-rdgatewaySubnet2Name": "Subnet-VMs",
+    "vn-rdgatewaySubnet2Prefix": "10.0.1.0/24",
+    "rdgatewayVnetName": "[concat(variables('rdgatewayName'),'-vn')]",
+    "rdgatewayVnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('rdgatewayVnetName'))]",
+    "rdgatewaySubnetRef": "[concat(variables('rdgatewayVnetID'), '/subnets/', variables('vn-rdgatewaySubnet1Name'))]",
+    "rdgatewayStorageAccountContainerName": "vhds",
+    "rdgatewayPublicIPName": "[concat(variables('rdgatewayName'),'-pip')]",
+    "rdgatewayNSGName": "[concat(variables('rdgatewayName'),'-nsg')]",
+      "rdgateway-dscConfigurationFunction": "rdgateway-dscConfiguration.ps1\\Main"
+  },
+  "resources": [
+    {
+      "name": "[variables('saRDGatewayName')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "StorageAccount"
+      },
+      "properties": {
+        "accountType": "[variables('saRDGatewayType')]"
+      }
+    },
+    {
+      "name": "[variables('rdgatewayVnetName')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "VirtualNetwork"
+      },
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('vn-rdgatewayPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('vn-rdgatewaySubnet1Name')]",
+            "properties": {
+              "addressPrefix": "[variables('vn-rdgatewaySubnet1Prefix')]"
+            }
+          },
+          {
+            "name": "[variables('vn-rdgatewaySubnet2Name')]",
+            "properties": {
+              "addressPrefix": "[variables('vn-rdgatewaySubnet2Prefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('rdgatewayNSGName')]",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "NetworkSecurityGroup"
+      },
+      "properties": {
+        "securityRules": [
+          {
+              "name": "HTTPS",
+              "properties": {
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('rdgatewayPublicIPName')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "PublicIP"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('rdgatewayName')]"
+        }
+      }
+    },
+    {
+      "name": "[variables('rdgatewayNicName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('rdgatewayVnetName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('rdgatewayPublicIPName'))]",
+        "[concat('Microsoft.Network/networkSecurityGroups/', variables('rdgatewayNSGName'))]"
+      ],
+      "tags": {
+        "displayName": "NIC"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('rdgatewaySubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('rdgatewayPublicIPName'))]"
+              }
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('rdgatewayNSGName'))]"
+        }
+      }
+    },
+    {
+      "name": "[variables('rdgatewayName')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('saRDGatewayName'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('rdgatewayNicName'))]"
+      ],
+      "tags": {
+        "displayName": "VirtualMachine"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[variables('rdgatewayVmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('rdgatewayName')]",
+          "adminUsername": "[parameters('rdgatewayAdminUsername')]",
+          "adminPassword": "[parameters('rdgatewayAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('rdgatewayImagePublisher')]",
+            "offer": "[variables('rdgatewayImageOffer')]",
+            "sku": "[variables('rdgatewayWindowsOSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "rdgatewayOSDisk",
+            "vhd": {
+              "uri": "[concat('http://', variables('saRDGatewayName'), '.blob.core.windows.net/', variables('rdgatewayStorageAccountContainerName'), '/', variables('rdgatewayOSDiskName'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('rdgatewayNicName'))]"
+            }
+          ]
+        }
+      },
+        "resources": [
+            {
+                "name": "rdgateway-dsc",
+                "type": "extensions",
+                "location": "[resourceGroup().location]",
+                "apiVersion": "2015-06-15",
+                "dependsOn": [
+                  "[concat('Microsoft.Compute/virtualMachines/', variables('rdgatewayName'))]"
+
+                ],
+                "tags": {
+                    "displayName": "rdgateway-dsc"
+                },
+                "properties": {
+                    "publisher": "Microsoft.Powershell",
+                    "type": "DSC",
+                    "typeHandlerVersion": "2.9",
+                    "autoUpgradeMinorVersion": true,
+                    "settings": {
+                        "modulesUrl": "[concat(parameters('_artifactsLocation'), '/', 'dsc.zip')]",
+                        "sasToken": "[parameters('_artifactsLocationSasToken')]",
+                        "configurationFunction": "[variables('rdgateway-dscConfigurationFunction')]",
+                        "properties": {
+                            "fqdn": "[parameters('rdgatewayFQDN')]"
+                        }
+                    },
+                    "protectedSettings": { }
+                }
+            }
+        ]
+    }
+  ],
+  "outputs": {
+  }
+}
